@@ -4,14 +4,17 @@
   "type": "module",
   "private": true,
   "devDependencies": {
+    "@rdfjs/types": "^2.0.1",
     "@types/bun": "latest",
-    "@rdfjs/types": "^2.0.1"
+    "@types/shexj": "^2.1.7"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
+    "@shexjs/visitor": "1.0.0-alpha.25",
     "fast-deep-equal": "^3.1.3",
+    "rdf-data-factory": "^2.0.2",
     "result-interface": "^2.3.3",
     "sparqlalgebrajs": "^5.0.1"
   }
