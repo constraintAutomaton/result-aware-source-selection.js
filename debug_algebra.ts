@@ -1,6 +1,6 @@
-import { translate } from "sparqlalgebrajs";
+import { translate } from 'sparqlalgebrajs';
 
-const query =`
+const query = `
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
 SELECT ?name
@@ -11,4 +11,4 @@ WHERE {
 
 const alg = translate(query);
 
-console.log(JSON.stringify(alg,null, 2));
+console.log(JSON.stringify(alg, null, 2));

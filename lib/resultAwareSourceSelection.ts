@@ -1,62 +1,52 @@
-import { Algebra, Factory as OperationFactory, Util } from "sparqlalgebrajs";
-import { type Result, result, error } from "result-interface";
-import type * as RDF from "@rdfjs/types";
-import type { Schema } from "shexj";
-const deepEqual = require("fast-deep-equal/es6");
+import { Algebra, AlgebraFactory, algebraUtils } from '@traqula/algebra-transformations-1-1';
+import { type Result, result, error } from 'result-interface';
+import type * as RDF from '@rdfjs/types';
+import type { Schema } from 'shexj';
+import type { IKG } from './shex_to_kg';
+const deepEqual = require('fast-deep-equal/es6');
 
-const AF = new OperationFactory();
+const AF = new AlgebraFactory();
+const TRANSFORMER = new algebraUtils.AlgebraTransformer();
 
 export function resultAwareSourceSelection(
   Q: Algebra.Operation,
-  F: IFederationMember[]
-): Result<Algebra.Operation, String> {
+  F: IFederationMember[],
+): Result<Algebra.Operation, string> {
   //AF.createUnion([recurResultAwareSourceSelection(Q, F)], true);
 
-  if (Q.type !== Algebra.types.PROJECT) {
-    return error("only support SELECT queries");
+  if (Q.type !== Algebra.Types.PROJECT) {
+    return error('only support SELECT queries');
   }
-  const QBgpConvertedIntoJoin = Util.mapOperation(
-    Q,
-    {
-      bgp(op: Algebra.Bgp, factory: OperationFactory) {
-        return {
-          recurse: false,
-          result: factory.createJoin(op.patterns),
-        };
+  const QBgpConvertedIntoJoin: Algebra.Project = TRANSFORMER.transformNode<'unsafe'>(Q, {
+    [Algebra.Types.BGP]: {
+      transform: (op: Algebra.Bgp) => {
+        return AF.createJoin(op.patterns);
       },
     },
-    AF
-  );
+  });
 
   return result(
-    recurResultAwareSourceSelection(
-      QBgpConvertedIntoJoin,
-      F,
-      QBgpConvertedIntoJoin.variables
-    )
+    recurResultAwareSourceSelection(QBgpConvertedIntoJoin, F, QBgpConvertedIntoJoin.variables),
   );
 }
 
 export function recurResultAwareSourceSelection(
   Q: Algebra.Operation,
   federation: IFederationMember[],
-  variables: RDF.Variable[]
+  variables: RDF.Variable[],
 ): Algebra.Operation {
   const plans: Algebra.Operation[] = [];
 
-  if (Q.type === Algebra.types.PATTERN) {
+  if (Q.type === Algebra.Types.PATTERN) {
     for (const federationMember of federation) {
-      const clonedQ: Algebra.Pattern = <Algebra.Pattern>Util.cloneOperation(Q);
-      const cloneQAssigned = assignFederationMemberToPattern(
-        clonedQ,
-        federationMember
-      );
+      const clonedQ: Algebra.Pattern = TRANSFORMER.transformNode(Q, {});
+      const cloneQAssigned = assignFederationMemberToPattern(clonedQ, federationMember);
       const plan = cloneQAssigned;
       plans.push(plan);
     }
   }
 
-  if (Q.type === Algebra.types.JOIN) {
+  if (Q.type === Algebra.Types.JOIN) {
     const nestedPlans: Algebra.Operation[] = [];
     for (const subQ of Q.input) {
       const plan = recurResultAwareSourceSelection(subQ, federation, variables);
@@ -69,14 +59,14 @@ export function recurResultAwareSourceSelection(
     }
   }
 
-  if (Q.type === Algebra.types.UNION) {
+  if (Q.type === Algebra.Types.UNION) {
     for (const subQ of Q.input) {
       const plan = recurResultAwareSourceSelection(subQ, federation, variables);
       plans.push(plan);
     }
   }
 
-  if(Q.type === Algebra.types.FILTER){
+  if (Q.type === Algebra.Types.FILTER) {
     const plan = recurResultAwareSourceSelection(Q.input, federation, variables);
     const filter = AF.createFilter(plan, Q.expression);
     plans.push(filter);
@@ -98,12 +88,17 @@ function generateCombinations<T>(arr: T[]): [T, T][] {
 }
 
 export function selectPlan(plans: Algebra.Operation[]): Algebra.Operation {
-  throw new Error("not implemented");
+  throw new Error('not implemented');
 }
 
-export function evaluatePlanShape(plan:Algebra.Operation, federation: IFederationMember[]):boolean{
-  return true
+export function evaluatePlanShape(
+  plan: Algebra.Operation,
+  federation: IFederationMember[],
+): boolean {
+  return true;
 }
+
+export type Summary = RDF.Store | IKG;
 
 export interface IFederationMember {
   url: string;
@@ -112,7 +107,7 @@ export interface IFederationMember {
 
 export function assignFederationMemberToPattern(
   operation: Algebra.Pattern,
-  f: IFederationMember
+  f: IFederationMember,
 ): Algebra.Pattern {
   operation.metadata = operation.metadata ? operation.metadata : {};
   operation.metadata.federationMember = f;
