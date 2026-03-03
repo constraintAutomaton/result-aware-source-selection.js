@@ -7,14 +7,16 @@ import type {
   ShapeOr,
   shapeExpr,
   ShapeAnd,
+  EachOf,
+  OneOf,
+  tripleExprOrRef,
   NodeConstraint,
   nodeKind,
   IRIREF,
   valueSetValue,
 } from 'shexj';
-import { Visitor } from '@shexjs/visitor';
 import { DataFactory } from 'rdf-data-factory';
-import { error, isError, isResult, result, type Result } from 'result-interface';
+import { error, isError, result, type Result } from 'result-interface';
 
 const DF = new DataFactory<RDF.Quad>();
 
@@ -60,6 +62,7 @@ export function shape_to_kg(
   const kg = shape_to_kg_subject(shape, subject, availableShapes);
   return kg;
 }
+
 /**
  * Convert a shape to a knowledge graph.
  * @param {ShapeDecl} shape A shape to convert into a kg.
@@ -72,57 +75,15 @@ function shape_to_kg_subject(
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {
-  const kg: IKG = {
-    statements: [],
-    unionStatement: [],
-    constraints: new Map(),
-  };
-  // we ignore restricts
-
   if (shape.shapeExpr === undefined) {
-    return result(kg);
+    return result({
+      statements: [],
+      unionStatement: [],
+      constraints: new Map(),
+    });
   }
-
-  handleShapeExpression(shape.shapeExpr, subject, availableShapes);
-  return result(kg);
+  return handleShapeExpression(shape.shapeExpr, subject, availableShapes);
 }
-/**
- * Create a function that visit a triple pattern constraints and convert it into a knowledge graph
- * @param kg 
- * @param subject 
- * @param availableShapes 
- * @returns 
-
-function visitTripleConstraintInjectKg(
-  kg: IKG,
-  subject: RDF.NamedNode,
-  availableShapes: Map<string, ShapeDecl>
-): (el: any) => void {
-  return (el) => {
-    const constraint = <TripleConstraint>el;
-    const predicate = DF.namedNode(constraint.predicate);
-    const expression = constraint.valueExpr;
-    // the case where constraint is not
-    if (expression !== undefined && typeof expression !== "string") {
-    } else if (typeof expression === "string") {
-      const resultNewKg = handleShapeDeclarationRef(
-        expression,
-        subject,
-        predicate,
-        availableShapes
-      );
-      if (isResult(resultNewKg)) {
-        mergeKg(kg, resultNewKg.value);
-      }
-    } else if (expression === undefined) {
-      // we suppose that in that case it can be anything
-      // This case should not really happen in practice
-      const triple = DF.quad(subject, predicate, DF.blankNode());
-      kg.statements.push(triple);
-    }
-  };
-}
- */
 
 export function quadToString(quad: RDF.Quad): string {
   return `${quad.subject.value}-${quad.predicate.value}-${quad.object.value}`;
@@ -134,7 +95,7 @@ export function quadToString(quad: RDF.Quad): string {
  * @param {NodeConstraint} node A node constraint.
  * @param {RDF.NamedNode} subject The subject of the triple.
  * @param {RDF.NamedNode} predicate The predicate of the triple.
- * @returns {Result<IKG, string>} - The resulting knowledge graph.
+ * @returns {IKG} - The resulting knowledge graph.
  */
 export function handleNodeConstraint(
   node: NodeConstraint,
@@ -184,44 +145,136 @@ function handleShapeExpression(
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
   predicate?: RDF.NamedNode,
-): IKG {
-  return {
+): Result<IKG, string> {
+  switch (shape.type) {
+    case 'NodeConstraint':
+      if (predicate === undefined) {
+        return result({ statements: [], unionStatement: [], constraints: new Map() });
+      }
+      return result(handleNodeConstraint(shape, subject, predicate));
+    case 'Shape':
+      return handleShape(shape, subject, availableShapes);
+    case 'ShapeAnd':
+      return handleShapeAnd(shape, subject, availableShapes, predicate);
+    case 'ShapeOr':
+      return handleShapeOr(shape, subject, availableShapes, predicate);
+    case 'ShapeNot':
+      return error('ShapeNot is not handled');
+    case 'ShapeExternal':
+      return error('ShapeExternal cannot be resolved');
+  }
+}
+
+export function handleShape(
+  shape: Shape,
+  subject: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
+  const kg: IKG = {
     statements: [],
     unionStatement: [],
     constraints: new Map(),
   };
-}
 
-function handleShape(
-  shape: Shape,
-  subject: RDF.Quad,
-  availableShapes: Map<string, ShapeDecl>,
-): IKG {
-  const statements: RDF.Quad[] = [];
-  if (shape.extra !== undefined) {
-    for (const iri of shape.extra) {
-      const quad = DF.quad(subject, DF.namedNode(iri), DF.blankNode());
-      statements.push(quad);
-    }
-  }
+  // we are ignoring extra for now
 
   // we are ignoring extend for now
 
   if (shape.expression !== undefined) {
-    if (typeof shape.expression === 'string') {
-      const quad = DF.quad(subject, DF.namedNode(shape.expression), DF.blankNode());
-      statements.push(quad);
-    } else {
-    }
+    const res = handleTripleExprOrRef(shape.expression, subject, availableShapes);
+    if (isError(res)) return res;
+    mergeKg(kg, res.value);
   }
 
+  return result(kg);
+}
+
+function handleTripleExprOrRef(
+  expr: tripleExprOrRef,
+  subject: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
+  if (typeof expr === 'string') {
+    return error(`tripleExprRef '${expr}' is not supported`);
+  }
+  return handleTripleExpr(expr, subject, availableShapes);
+}
+
+function handleTripleExpr(
+  expr: EachOf | OneOf | TripleConstraint,
+  subject: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
+  switch (expr.type) {
+    case 'TripleConstraint':
+      return handleTripleConstraint(expr, subject, availableShapes);
+    case 'EachOf':
+      return handleEachOf(expr, subject, availableShapes);
+    case 'OneOf':
+      return handleOneOf(expr, subject, availableShapes);
+  }
+}
+
+function handleTripleConstraint(
+  expr: TripleConstraint,
+  subject: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
+  if (expr.inverse === true) {
+    return error(`inverse TripleConstraints are not supported (predicate: ${expr.predicate})`);
+  }
+  const predicate = DF.namedNode(expr.predicate);
+
+  if (expr.valueExpr === undefined) {
+    return result({
+      statements: [DF.quad(subject, predicate, DF.blankNode())],
+      unionStatement: [],
+      constraints: new Map(),
+    });
+  }
+  if (typeof expr.valueExpr === 'string') {
+    return handleShapeDeclarationRef(expr.valueExpr, subject, predicate, availableShapes);
+  }
+  const subSuject = DF.namedNode(`sub-${subject.value}`);
+  return handleShapeExpression(expr.valueExpr, subSuject, availableShapes, predicate);
+}
+
+function handleEachOf(
+  expr: EachOf,
+  subject: RDF.NamedNode|RDF.BlankNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
   const kg: IKG = {
-    statements,
+    statements: [],
     unionStatement: [],
     constraints: new Map(),
   };
+  for (const sub of expr.expressions) {
+    const res = handleTripleExprOrRef(sub, subject, availableShapes);
+    if (isError(res)) {
+      return res;
+    }
+    mergeKg(kg, res.value);
+  }
+  return result(kg);
+}
 
-  return kg;
+function handleOneOf(
+  expr: OneOf,
+  subject: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>,
+): Result<IKG, string> {
+  const kg: IKG = {
+    statements: [],
+    unionStatement: [],
+    constraints: new Map(),
+  };
+  for (const sub of expr.expressions) {
+    const res = handleTripleExprOrRef(sub, subject, availableShapes);
+    if (isError(res)) return res;
+    mergeUnionKg(kg, res.value);
+  }
+  return result(kg);
 }
 
 function handleShapeDeclarationRef(
@@ -252,31 +305,34 @@ function handleShapeDeclarationRef(
   return result(kg);
 }
 
-function handleShapeAnd(
+export function handleShapeAnd(
   shape: ShapeAnd,
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
   predicate?: RDF.NamedNode,
 ): Result<IKG, string> {
-  return handleShapeOrAnd(mergeKg, shape, subject, availableShapes, predicate);
+  return handleShapeOrAnd(shape, subject, availableShapes, predicate);
 }
 
-function handleShapeOr(
+export function handleShapeOr(
   shape: ShapeOr,
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
   predicate?: RDF.NamedNode,
 ): Result<IKG, string> {
-  return handleShapeOrAnd(mergeUnionKg, shape, subject, availableShapes, predicate);
+  return handleShapeOrAnd(shape, subject, availableShapes, predicate);
 }
 
 function handleShapeOrAnd(
-  mergeFunction: (mergeableKg: IKG, otherKg: IKG) => void,
   shape: ShapeOr | ShapeAnd,
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
   predicate?: RDF.NamedNode,
 ): Result<IKG, string> {
+  const mergeFunction: (mergeableKg: IKG, otherKg: IKG) => void = isShapeOr(shape)
+    ? mergeUnionKg
+    : mergeKg;
+
   const kg: IKG = {
     statements: [],
     unionStatement: [],
@@ -290,22 +346,36 @@ function handleShapeOrAnd(
       }
       mergeFunction(kg, resultKg.value);
     } else if (typeof expression === 'string' && predicate === undefined) {
-      return error('no predicate was defined for a union shape as a value expression');
+      const refShape = availableShapes.get(expression);
+      if (refShape === undefined) {
+        return error(`shape ${expression} is not an available shape`);
+      }
+      const subKg = shape_to_kg_subject(refShape, DF.namedNode(refShape.id), availableShapes);
+      if (isError(subKg)) return subKg;
+      mergeFunction(kg, subKg.value);
     } else if (typeof expression !== 'string') {
-      const otherKg = handleShapeExpression(expression, subject, availableShapes, predicate);
-      mergeFunction(kg, otherKg);
+      const res = handleShapeExpression(expression, subject, availableShapes, predicate);
+      if (isError(res)) return res;
+      mergeFunction(kg, res.value);
     }
   }
   return result(kg);
 }
 
-function mergeKg(mergeableKg: IKG, otherKg: IKG): void {
+export function mergeKg(mergeableKg: IKG, otherKg: IKG): void {
   mergeableKg.statements = mergeableKg.statements.concat(otherKg.statements);
   mergeableKg.unionStatement = mergeableKg.unionStatement.concat(otherKg.unionStatement);
-  mergeableKg.constraints = new Map([...mergeableKg.constraints, ...otherKg.constraints]);
+  for (const [key, constraint] of otherKg.constraints) {
+    const mergeableKgConstraint = mergeableKg.constraints.get(key);
+    if (mergeableKgConstraint) {
+      mergeableKgConstraint.push(...constraint);
+    } else {
+      mergeableKg.constraints.set(key, constraint);
+    }
+  }
 }
 
-function mergeUnionKg(mergeableKg: IKG, otherKg: IKG): void {
+export function mergeUnionKg(mergeableKg: IKG, otherKg: IKG): void {
   mergeableKg.unionStatement.push(otherKg);
 }
 
@@ -315,15 +385,34 @@ export interface IKG {
   constraints: Map<string, IKGConstraint[]>;
 }
 
-export interface IKGConstraint {
+export type IKGConstraint = {
   statement: RDF.Quad;
-  kind: Kind;
-  constraint: nodeKind | IRIREF | valueSetValue[];
-}
+} & (
+  | {
+      kind: Kind.NODE_KIND;
+      constraint: nodeKind;
+    }
+  | {
+      kind: Kind.IRI_REF;
+      constraint: IRIREF;
+    }
+  | {
+      kind: Kind.DATA_TYPE;
+      constraint: IRIREF;
+    }
+  | {
+      kind: Kind.VALUE_SET;
+      constraint: valueSetValue[];
+    }
+);
 
 export enum Kind {
   NODE_KIND,
   IRI_REF,
   DATA_TYPE,
   VALUE_SET,
+}
+
+function isShapeOr(shape: ShapeOr | ShapeAnd): shape is ShapeOr {
+  return shape.type === 'ShapeOr';
 }
