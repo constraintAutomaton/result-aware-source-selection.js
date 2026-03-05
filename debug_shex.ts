@@ -1,21 +1,31 @@
-import * as Shex from '@shexjs/parser'
+import * as Shex from '@shexjs/parser';
 
-const parser = Shex.construct("");
+const parser = Shex.construct('');
 
 const data = `
-  PREFIX ex: <http://ex.example/#>
+  PREFIX ex: <http://example.org/>
   PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
-
-  my:IssueShape {
-  ex:state [ex:unassigned ex:assigned];
-  ex:reportedBy {
-    foaf:name LITERAL;
-    foaf:mbox IRI+
+  ex:PersonShape {
+    ex:email xsd:string ;
+  } OR {
+    ex:phone xsd:string ;
   }
-}`;
+`;
 
-const resp = parser.parse(data);
+
+const otherversion = `
+  PREFIX ex: <http://example.org/>
+  PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+  ex:PersonShape {
+    ex:email xsd:string ;
+  } OR {
+    ex:phone xsd:string ;
+  }
+
+`;
+
+const resp = parser.parse(otherversion);
 
 console.log(JSON.stringify(resp, null, 2));

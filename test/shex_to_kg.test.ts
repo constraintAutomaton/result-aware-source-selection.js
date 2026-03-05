@@ -3,6 +3,7 @@ import { inspect } from 'util';
 import {
   handleNodeConstraint,
   handleShape,
+  handleShapeOr,
   Kind,
   mergeKg,
   mergeUnionKg,
@@ -19,6 +20,23 @@ import { isResult, type IResult } from 'result-interface';
 
 const DF = new DataFactory<RDF.Quad>();
 const SHEX_PARSER = Shex.construct('');
+
+function termToString(term: RDF.Term): string {
+  if (term.termType === 'NamedNode') return `<${term.value}>`;
+  if (term.termType === 'BlankNode') return `_:${term.value}`;
+  if (term.termType === 'Literal') return `"${term.value}"`;
+  return term.value;
+}
+
+function kgToString(quads: RDF.Quad[]): string {
+  if (quads.length === 0) return '  (empty)';
+  return quads
+    .map(
+      (q) =>
+        `  ${termToString(q.subject)} ${termToString(q.predicate)} ${termToString(q.object)} .`,
+    )
+    .join('\n');
+}
 
 describe(handleNodeConstraint.name, () => {
   const subject = DF.namedNode('s');
@@ -249,7 +267,10 @@ describe(mergeKg.name, () => {
       ],
     ]);
 
-    expect(isomorphic(firstKg.statements, expectedStatement)).toBe(true);
+    expect(
+      isomorphic(firstKg.statements, expectedStatement),
+      `KGs are not isomorphic.\nActual:\n${kgToString(firstKg.statements)}\nExpected:\n${kgToString(expectedStatement)}`,
+    ).toBe(true);
     expect(firstKg.unionStatement).toEqual([prevKg]);
     equalConstrainst(firstKg.constraints, expectedConstraints);
   });
@@ -305,7 +326,10 @@ describe(handleShape.name, () => {
     const resp = handleShape(shape, subject, new Map()) as IResult<IKG>;
 
     expect(isResult(resp)).toBe(true);
-    expect(isomorphic(resp.value.statements, expectedKg.statements)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
     expect(resp.value.unionStatement).toBeArrayOfSize(0);
     equalConstrainst(resp.value.constraints, expectedKg.constraints);
   });
@@ -349,7 +373,7 @@ describe(handleShape.name, () => {
       {
         statements: [
           DF.quad(subject, DF.namedNode('http://a.example/givenName'), DF.blankNode()),
-          DF.quad(subject, DF.namedNode('http://a.example/familyName'), DF.blankNode())
+          DF.quad(subject, DF.namedNode('http://a.example/familyName'), DF.blankNode()),
         ],
         unionStatement: [],
         constraints: new Map([
@@ -357,7 +381,11 @@ describe(handleShape.name, () => {
             '1',
             [
               {
-                statement: DF.quad(subject, DF.namedNode('http://a.example/givenName'), DF.blankNode()),
+                statement: DF.quad(
+                  subject,
+                  DF.namedNode('http://a.example/givenName'),
+                  DF.blankNode(),
+                ),
                 kind: Kind.NODE_KIND,
                 constraint: 'literal',
               },
@@ -367,7 +395,11 @@ describe(handleShape.name, () => {
             '2',
             [
               {
-                statement: DF.quad(subject, DF.namedNode('http://a.example/familyName'), DF.blankNode()),
+                statement: DF.quad(
+                  subject,
+                  DF.namedNode('http://a.example/familyName'),
+                  DF.blankNode(),
+                ),
                 kind: Kind.NODE_KIND,
                 constraint: 'literal',
               },
@@ -397,11 +429,18 @@ describe(handleShape.name, () => {
     const resp = handleShape(shape, subject, new Map()) as IResult<IKG>;
 
     expect(isResult(resp)).toBe(true);
-    expect(isomorphic(resp.value.statements, expectedKg.statements)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
     equalConstrainst(resp.value.constraints, expectedKg.constraints);
     expect(resp.value.unionStatement).toBeArrayOfSize(2);
     for (const [i, kg] of resp.value.unionStatement.entries()) {
-      expect(isomorphic(kg.statements, expectedKg.unionStatement[i]?.statements!)).toBe(true);
+      const expectedUnion = expectedKg.unionStatement[i]?.statements!;
+      expect(
+        isomorphic(kg.statements, expectedUnion),
+        `Union KG[${i}] is not isomorphic.\nActual:\n${kgToString(kg.statements)}\nExpected:\n${kgToString(expectedUnion)}`,
+      ).toBe(true);
       equalConstrainst(kg.constraints, expectedKg.unionStatement[i]?.constraints!);
     }
   });
@@ -424,20 +463,53 @@ describe(handleShape.name, () => {
     expect(shape.type).toBe('Shape');
     const statements = [
       DF.quad(subject, DF.namedNode('http://a.example/state'), DF.blankNode()),
-      DF.quad(subject, DF.namedNode('http://a.example/reportedBy'), DF.namedNode(`sub-${subject.value}`)),
-      DF.quad(DF.namedNode(`sub-${subject.value}`), DF.namedNode('http://a.example/name'), DF.blankNode()),
-      DF.quad(DF.namedNode(`sub-${subject.value}`), DF.namedNode('http://a.example/mbox'), DF.blankNode())
+      DF.quad(
+        subject,
+        DF.namedNode('http://a.example/reportedBy'),
+        DF.namedNode(`sub-${subject.value}`),
+      ),
+      DF.quad(
+        DF.namedNode(`sub-${subject.value}`),
+        DF.namedNode('http://a.example/name'),
+        DF.blankNode(),
+      ),
+      DF.quad(
+        DF.namedNode(`sub-${subject.value}`),
+        DF.namedNode('http://a.example/mbox'),
+        DF.blankNode(),
+      ),
     ];
 
+    const subSubject = DF.namedNode(`sub-${subject.value}`);
     const expectedKg: IKG = {
       statements,
-      unionStatement:[],
+      unionStatement: [],
       constraints: new Map([
         [
           '1',
           [
             {
-              statement: DF.quad(subject, DF.namedNode('http://a.example/mbox'), DF.blankNode()),
+              statement: DF.quad(subject, DF.namedNode('http://a.example/state'), DF.blankNode()),
+              kind: Kind.VALUE_SET,
+              constraint: ['http://a.example/unassigned', 'http://a.example/assigned'],
+            },
+          ],
+        ],
+        [
+          '2',
+          [
+            {
+              statement: DF.quad(subSubject, DF.namedNode('http://a.example/name'), DF.blankNode()),
+              kind: Kind.NODE_KIND,
+              constraint: 'literal',
+            },
+          ],
+        ],
+        [
+          '3',
+          [
+            {
+              statement: DF.quad(subSubject, DF.namedNode('http://a.example/mbox'), DF.blankNode()),
               kind: Kind.NODE_KIND,
               constraint: 'iri',
             },
@@ -449,13 +521,64 @@ describe(handleShape.name, () => {
     const resp = handleShape(shape, subject, new Map()) as IResult<IKG>;
 
     expect(isResult(resp)).toBe(true);
-    expect(isomorphic(resp.value.statements, expectedKg.statements)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
     equalConstrainst(resp.value.constraints, expectedKg.constraints);
     expect(resp.value.unionStatement).toBeArrayOfSize(0);
-
   });
+});
 
+describe(handleShapeOr.name, () => {
+  it('should handle multiple shapes', () => {
+    const subject = DF.namedNode('foo');
 
+    const shapeString = `
+      PREFIX ex: <http://example.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+      ex:PersonShape {
+        ex:email xsd:string ;
+      } OR {
+        ex:phone xsd:string ;
+      }`;
+    const schema = SHEX_PARSER.parse(shapeString);
+    const shape: ShapeOr = schema?.shapes![0]?.shapeExpr as ShapeOr;
+
+    const emailBranch: IKG = {
+      statements: [
+        DF.quad(
+          DF.namedNode('http://example.org/PersonShape'),
+          DF.namedNode('http://example.org/email'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                DF.namedNode('http://example.org/PersonShape'),
+                DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedKg: IKG = {
+      statements: [],
+      unionStatement:[emailBranch],
+      constraints: new Map(),
+    };
+  });
 });
 
 function equalConstrainst(
@@ -478,7 +601,10 @@ function equalConstrainst(
 
     const firstIsArray = Array.isArray(constraint.constraint);
     const secondIsArray = Array.isArray(match!.constraint);
-    expect(firstIsArray, `Constraint type mismatch for:\n${inspect(constraint, { depth: null })}\n\nMatched:\n${inspect(match, { depth: null })}`).toBe(secondIsArray);
+    expect(
+      firstIsArray,
+      `Constraint type mismatch for:\n${inspect(constraint, { depth: null })}\n\nMatched:\n${inspect(match, { depth: null })}`,
+    ).toBe(secondIsArray);
 
     if (firstIsArray) {
       equalValueSets(

@@ -10,6 +10,7 @@ import type {
   EachOf,
   OneOf,
   tripleExprOrRef,
+  shapeExprOrRef,
   NodeConstraint,
   nodeKind,
   IRIREF,
@@ -149,15 +150,15 @@ function handleShapeExpression(
   switch (shape.type) {
     case 'NodeConstraint':
       if (predicate === undefined) {
-        return result({ statements: [], unionStatement: [], constraints: new Map() });
+        return error("");
       }
       return result(handleNodeConstraint(shape, subject, predicate));
     case 'Shape':
       return handleShape(shape, subject, availableShapes);
     case 'ShapeAnd':
-      return handleShapeAnd(shape, subject, availableShapes, predicate);
+      return handleShapeAnd(shape, subject, availableShapes);
     case 'ShapeOr':
-      return handleShapeOr(shape, subject, availableShapes, predicate);
+      return handleShapeOr(shape, subject, availableShapes);
     case 'ShapeNot':
       return error('ShapeNot is not handled');
     case 'ShapeExternal':
@@ -175,11 +176,8 @@ export function handleShape(
     unionStatement: [],
     constraints: new Map(),
   };
-
   // we are ignoring extra for now
-
   // we are ignoring extend for now
-
   if (shape.expression !== undefined) {
     const res = handleTripleExprOrRef(shape.expression, subject, availableShapes);
     if (isError(res)) return res;
@@ -235,13 +233,26 @@ function handleTripleConstraint(
   if (typeof expr.valueExpr === 'string') {
     return handleShapeDeclarationRef(expr.valueExpr, subject, predicate, availableShapes);
   }
-  const subSuject = DF.namedNode(`sub-${subject.value}`);
-  return handleShapeExpression(expr.valueExpr, subSuject, availableShapes, predicate);
+  if (expr.valueExpr.type === 'NodeConstraint') {
+    return handleShapeExpression(expr.valueExpr, subject, availableShapes, predicate);
+  }
+
+  const subSubject = DF.namedNode(`sub-${subject.value}`);
+  const connectingTriple = DF.quad(subject, predicate, subSubject);
+  const res = handleShapeExpression(expr.valueExpr, subSubject, availableShapes);
+  if (isError(res)) {
+    return res;
+  }
+  return result({
+    statements: [connectingTriple, ...res.value.statements],
+    unionStatement: res.value.unionStatement,
+    constraints: res.value.constraints,
+  });
 }
 
 function handleEachOf(
   expr: EachOf,
-  subject: RDF.NamedNode|RDF.BlankNode,
+  subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {
   const kg: IKG = {
@@ -309,25 +320,22 @@ export function handleShapeAnd(
   shape: ShapeAnd,
   subject: RDF.NamedNode,
   availableShapes: Map<string, ShapeDecl>,
-  predicate?: RDF.NamedNode,
 ): Result<IKG, string> {
-  return handleShapeOrAnd(shape, subject, availableShapes, predicate);
+  return handleShapeOrAnd(shape, subject, availableShapes);
 }
 
 export function handleShapeOr(
   shape: ShapeOr,
   subject: RDF.NamedNode,
-  availableShapes: Map<string, ShapeDecl>,
-  predicate?: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>
 ): Result<IKG, string> {
-  return handleShapeOrAnd(shape, subject, availableShapes, predicate);
+  return handleShapeOrAnd(shape, subject, availableShapes);
 }
 
 function handleShapeOrAnd(
   shape: ShapeOr | ShapeAnd,
   subject: RDF.NamedNode,
-  availableShapes: Map<string, ShapeDecl>,
-  predicate?: RDF.NamedNode,
+  availableShapes: Map<string, ShapeDecl>
 ): Result<IKG, string> {
   const mergeFunction: (mergeableKg: IKG, otherKg: IKG) => void = isShapeOr(shape)
     ? mergeUnionKg
@@ -339,29 +347,31 @@ function handleShapeOrAnd(
     constraints: new Map(),
   };
   for (const expression of shape.shapeExprs) {
-    if (typeof expression === 'string' && predicate !== undefined) {
-      const resultKg = handleShapeDeclarationRef(expression, subject, predicate, availableShapes);
+    if (isShapeExpression(expression)) {
+      const resultKg = handleShapeExpression(expression, subject, availableShapes);
       if (isError(resultKg)) {
         return resultKg;
       }
       mergeFunction(kg, resultKg.value);
-    } else if (typeof expression === 'string' && predicate === undefined) {
-      const refShape = availableShapes.get(expression);
-      if (refShape === undefined) {
-        return error(`shape ${expression} is not an available shape`);
-      }
-      const subKg = shape_to_kg_subject(refShape, DF.namedNode(refShape.id), availableShapes);
-      if (isError(subKg)) return subKg;
-      mergeFunction(kg, subKg.value);
-    } else if (typeof expression !== 'string') {
-      const res = handleShapeExpression(expression, subject, availableShapes, predicate);
-      if (isError(res)) return res;
-      mergeFunction(kg, res.value);
-    }
+    } else {
+      return error("shape reference not supported");
+  }
   }
   return result(kg);
+
 }
 
+function isShapeExpression(entity: shapeExprOrRef): entity is shapeExpr {
+  if (typeof entity === 'string') {
+    return false;
+  }
+  return (
+    entity.type === 'Shape' ||
+    entity.type === 'ShapeOr' ||
+    entity.type === 'ShapeAnd' ||
+    entity.type === 'ShapeNot'
+  );
+}
 export function mergeKg(mergeableKg: IKG, otherKg: IKG): void {
   mergeableKg.statements = mergeableKg.statements.concat(otherKg.statements);
   mergeableKg.unionStatement = mergeableKg.unionStatement.concat(otherKg.unionStatement);
