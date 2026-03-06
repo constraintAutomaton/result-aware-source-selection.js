@@ -6,9 +6,13 @@ const data = `
   PREFIX ex: <http://example.org/>
   PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-  ex:PersonShape {
+  ex:PersonShape @ex:EmailShape OR @ex:PhoneShape
+
+  ex:EmailShape {
     ex:email xsd:string ;
-  } OR {
+  }
+
+  ex:PhoneShape {
     ex:phone xsd:string ;
   }
 `;
@@ -26,6 +30,6 @@ const otherversion = `
 
 `;
 
-const resp = parser.parse(otherversion);
+const resp = parser.parse(data);
 
 console.log(JSON.stringify(resp, null, 2));

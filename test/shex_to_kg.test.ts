@@ -3,6 +3,7 @@ import { inspect } from 'util';
 import {
   handleNodeConstraint,
   handleShape,
+  handleShapeAnd,
   handleShapeOr,
   Kind,
   mergeKg,
@@ -11,7 +12,7 @@ import {
   type IKG,
   type IKGConstraint,
 } from '../lib/shex_to_kg';
-import type { NodeConstraint, ShapeOr, Shape, EachOf, valueSetValue } from 'shexj';
+import type { NodeConstraint, ShapeOr, Shape, valueSetValue, ShapeDecl } from 'shexj';
 import { DataFactory } from 'rdf-data-factory';
 import * as RDF from '@rdfjs/types';
 import { isomorphic } from 'rdf-isomorphic';
@@ -531,7 +532,7 @@ describe(handleShape.name, () => {
 });
 
 describe(handleShapeOr.name, () => {
-  it('should handle multiple shapes', () => {
+  it('should handle multiple shapes inline', () => {
     const subject = DF.namedNode('foo');
 
     const shapeString = `
@@ -546,10 +547,10 @@ describe(handleShapeOr.name, () => {
     const schema = SHEX_PARSER.parse(shapeString);
     const shape: ShapeOr = schema?.shapes![0]?.shapeExpr as ShapeOr;
 
-    const emailBranch: IKG = {
+    const expectedEmailBranch: IKG = {
       statements: [
         DF.quad(
-          DF.namedNode('http://example.org/PersonShape'),
+          subject,
           DF.namedNode('http://example.org/email'),
           DF.blankNode(),
         ),
@@ -562,8 +563,35 @@ describe(handleShapeOr.name, () => {
             {
               kind: Kind.DATA_TYPE,
               statement: DF.quad(
-                DF.namedNode('http://example.org/PersonShape'),
+                subject,
                 DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedPhoneBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/phone'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/phone'),
                 DF.blankNode(),
               ),
               constraint: 'http://www.w3.org/2001/XMLSchema#string',
@@ -575,10 +603,137 @@ describe(handleShapeOr.name, () => {
 
     const expectedKg: IKG = {
       statements: [],
-      unionStatement:[emailBranch],
+      unionStatement: [expectedEmailBranch, expectedPhoneBranch],
       constraints: new Map(),
     };
+
+    const resp = handleShapeOr(shape, subject, new Map()) as IResult<IKG>;
+
+    expect(isResult(resp)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
+    equalConstrainst(resp.value.constraints, expectedKg.constraints);
+    expect(resp.value.unionStatement).toBeArrayOfSize(2);
+
+    const respEmailBranch = resp.value.unionStatement[0]!;
+    const respPhoneBranch = resp.value.unionStatement[1]!;
+    for (const [branch, expectedBranch] of [[respEmailBranch, expectedEmailBranch], [respPhoneBranch, expectedPhoneBranch]] as [IKG, IKG][]) {
+      expect(
+        isomorphic(branch.statements, expectedBranch.statements),
+        `KGs are not isomorphic.\nActual:\n${kgToString(branch.statements)}\nExpected:\n${kgToString(expectedBranch.statements)}`,
+      ).toBe(true);
+      equalConstrainst(branch.constraints, expectedBranch.constraints);
+      expect(branch.unionStatement).toBeArrayOfSize(0);
+    }
   });
+
+  it('should handle multiple shapes remote', () => {
+    const subject = DF.namedNode('foo');
+
+    const shapeString = `
+      PREFIX ex: <http://example.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+      ex:PersonShape @ex:EmailShape OR @ex:PhoneShape
+
+      ex:EmailShape {
+        ex:email xsd:string ;
+      }
+
+      ex:PhoneShape {
+        ex:phone xsd:string ;
+      }`;
+    const schema = SHEX_PARSER.parse(shapeString);
+    const availableShapes: Map<string, ShapeDecl> = new Map(schema?.shapes!.map((el) => [el.id, el]));
+    const shape: ShapeOr = schema?.shapes![0]?.shapeExpr as ShapeOr;
+
+    const expectedEmailBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/email'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedPhoneBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/phone'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/phone'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedKg: IKG = {
+      statements: [],
+      unionStatement: [expectedEmailBranch, expectedPhoneBranch],
+      constraints: new Map(),
+    };
+
+    const resp = handleShapeOr(shape, subject, availableShapes) as IResult<IKG>;
+
+    expect(isResult(resp)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
+    equalConstrainst(resp.value.constraints, expectedKg.constraints);
+    expect(resp.value.unionStatement).toBeArrayOfSize(2);
+
+    const respEmailBranch = resp.value.unionStatement[0]!;
+    const respPhoneBranch = resp.value.unionStatement[1]!;
+    for (const [branch, expectedBranch] of [[respEmailBranch, expectedEmailBranch], [respPhoneBranch, expectedPhoneBranch]] as [IKG, IKG][]) {
+      expect(
+        isomorphic(branch.statements, expectedBranch.statements),
+        `KGs are not isomorphic.\nActual:\n${kgToString(branch.statements)}\nExpected:\n${kgToString(expectedBranch.statements)}`,
+      ).toBe(true);
+      equalConstrainst(branch.constraints, expectedBranch.constraints);
+      expect(branch.unionStatement).toBeArrayOfSize(0);
+    }
+  });
+});
+
+describe(handleShapeAnd.name, () => {
+
 });
 
 function equalConstrainst(

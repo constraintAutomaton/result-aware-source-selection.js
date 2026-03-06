@@ -150,7 +150,7 @@ function handleShapeExpression(
   switch (shape.type) {
     case 'NodeConstraint':
       if (predicate === undefined) {
-        return error("");
+        return error('');
       }
       return result(handleNodeConstraint(shape, subject, predicate));
     case 'Shape':
@@ -291,7 +291,7 @@ function handleOneOf(
 function handleShapeDeclarationRef(
   declaration: string,
   subject: RDF.NamedNode,
-  predicate: RDF.NamedNode,
+  predicate: RDF.NamedNode | undefined,
   availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {
   //The expression is a constraint by a shape
@@ -300,14 +300,17 @@ function handleShapeDeclarationRef(
   if (shape === undefined) {
     return error(`shape ${declaration} is not an available shape`);
   }
-  const subSubject = DF.namedNode(shape.id);
+  const subSubject = predicate === undefined ? subject : DF.namedNode(shape.id);
   const respSubKg = shape_to_kg_subject(shape, subSubject, availableShapes);
   if (isError(respSubKg)) {
     return respSubKg;
   }
-  const triple = DF.quad(subject, predicate, subSubject);
+  const statements: RDF.Quad[] = [];
+  if (predicate !== undefined) {
+    statements.push(DF.quad(subject, predicate, subSubject));
+  }
   const kg: IKG = {
-    statements: [triple],
+    statements,
     unionStatement: [],
     constraints: new Map(),
   };
@@ -327,7 +330,7 @@ export function handleShapeAnd(
 export function handleShapeOr(
   shape: ShapeOr,
   subject: RDF.NamedNode,
-  availableShapes: Map<string, ShapeDecl>
+  availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {
   return handleShapeOrAnd(shape, subject, availableShapes);
 }
@@ -335,7 +338,7 @@ export function handleShapeOr(
 function handleShapeOrAnd(
   shape: ShapeOr | ShapeAnd,
   subject: RDF.NamedNode,
-  availableShapes: Map<string, ShapeDecl>
+  availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {
   const mergeFunction: (mergeableKg: IKG, otherKg: IKG) => void = isShapeOr(shape)
     ? mergeUnionKg
@@ -347,18 +350,20 @@ function handleShapeOrAnd(
     constraints: new Map(),
   };
   for (const expression of shape.shapeExprs) {
+    let resultKg: Result<IKG, string> | undefined;
     if (isShapeExpression(expression)) {
-      const resultKg = handleShapeExpression(expression, subject, availableShapes);
-      if (isError(resultKg)) {
-        return resultKg;
-      }
-      mergeFunction(kg, resultKg.value);
+      resultKg = handleShapeExpression(expression, subject, availableShapes);
+    } else if (typeof expression === 'string') {
+      resultKg = handleShapeDeclarationRef(expression, subject, undefined, availableShapes);
     } else {
-      return error("shape reference not supported");
-  }
+      return error(`the expression "${expression}" is not supported`);
+    }
+    if (isError(resultKg)) {
+      return resultKg;
+    }
+    mergeFunction(kg, resultKg.value);
   }
   return result(kg);
-
 }
 
 function isShapeExpression(entity: shapeExprOrRef): entity is shapeExpr {
