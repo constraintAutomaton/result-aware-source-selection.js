@@ -55,7 +55,7 @@ export function shex_to_kg(schema: Schema): Result<IKG, string> {
  * @param {Map<string, ShapeDecl>} availableShapes the shapes that are available in the schema
  * @returns {Result<IKG, string>} - The resulting knowledge graph.
  */
-export function shape_to_kg(
+function shape_to_kg(
   shape: ShapeDecl,
   availableShapes: Map<string, ShapeDecl>,
 ): Result<IKG, string> {

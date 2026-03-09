@@ -6,7 +6,7 @@ const data = `
   PREFIX ex: <http://example.org/>
   PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-  ex:PersonShape @ex:EmailShape OR @ex:PhoneShape
+  ex:PersonShape @ex:EmailShape AND @ex:PhoneShape
 
   ex:EmailShape {
     ex:email xsd:string ;
