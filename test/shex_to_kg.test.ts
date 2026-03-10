@@ -1160,8 +1160,8 @@ describe(shex_to_kg.name, () => {
     expect(resp.value.unionStatement).toBeArrayOfSize(0);
   });
 
-  it('should handle multiple remote shapes', () => {
-    const subject = DF.namedNode('foo');
+  it('should handle multiple remote shapes with ShapeOr', () => {
+    const subject = DF.namedNode('http://example.org/PersonShape');
 
     const shapeString = `
       PREFIX ex: <http://example.org/>
@@ -1174,6 +1174,102 @@ describe(shex_to_kg.name, () => {
       }
 
       ex:PhoneShape {
+        ex:phone xsd:string ;
+      }`;
+    const schema = SHEX_PARSER.parse(shapeString);
+
+    const expectedEmailBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/email'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedPhoneBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/phone'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/phone'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedKg: IKG = {
+      statements: [],
+      unionStatement: [expectedEmailBranch, expectedPhoneBranch],
+      constraints: new Map(),
+    };
+
+    const resp = shex_to_kg(schema) as IResult<IKG>;
+
+    expect(isResult(resp)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
+    equalConstrainst(resp.value.constraints, expectedKg.constraints);
+    expect(resp.value.unionStatement.length).toBe(2);
+
+    const respEmailBranch = resp.value.unionStatement[0]!;
+    const respPhoneBranch = resp.value.unionStatement[1]!;
+    for (const [branch, expectedBranch] of [[respEmailBranch, expectedEmailBranch], [respPhoneBranch, expectedPhoneBranch]] as [IKG, IKG][]) {
+      expect(
+        isomorphic(branch.statements, expectedBranch.statements),
+        `KGs are not isomorphic.\nActual:\n${kgToString(branch.statements)}\nExpected:\n${kgToString(expectedBranch.statements)}`,
+      ).toBe(true);
+      equalConstrainst(branch.constraints, expectedBranch.constraints);
+      expect(branch.unionStatement).toBeArrayOfSize(0);
+    }
+  });
+
+  it('should handle multiple shapes inline with ShapeOr', () => {
+    const subject = DF.namedNode('http://example.org/PersonShape');
+
+    const shapeString = `
+      PREFIX ex: <http://example.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+      ex:PersonShape {
+        ex:email xsd:string ;
+      } OR {
         ex:phone xsd:string ;
       }`;
     const schema = SHEX_PARSER.parse(shapeString);
@@ -1260,6 +1356,180 @@ describe(shex_to_kg.name, () => {
     }
   });
 
+  it('should handle multiple shapes inline with ShapeAnd', () => {
+    const subject = DF.namedNode('http://example.org/PersonShape');
+
+    const shapeString = `
+      PREFIX ex: <http://example.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+      ex:PersonShape {
+        ex:email xsd:string ;
+      } AND {
+        ex:phone xsd:string ;
+      }`;
+    const schema = SHEX_PARSER.parse(shapeString);
+    const shape: ShapeAnd = schema?.shapes![0]?.shapeExpr as ShapeAnd;
+
+    const expectedEmailBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/email'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedPhoneBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/phone'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'b',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/phone'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedKg: IKG = {
+      statements: [...expectedEmailBranch.statements, ...expectedPhoneBranch.statements],
+      unionStatement: [expectedEmailBranch, expectedPhoneBranch],
+      constraints: new Map([...expectedEmailBranch.constraints, ...expectedPhoneBranch.constraints]),
+    };
+
+    const resp = handleShapeAnd(shape, subject, new Map()) as IResult<IKG>;
+
+    expect(isResult(resp)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
+    equalConstrainst(resp.value.constraints, expectedKg.constraints);
+    expect(resp.value.unionStatement).toBeArrayOfSize(0);
+  });
+
+  it('should handle multiple remote shapes ShapeAnd', () => {
+    const subject = DF.namedNode('http://example.org/PersonShape');
+
+    const shapeString = `
+      PREFIX ex: <http://example.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+      ex:PersonShape @ex:EmailShape AND @ex:PhoneShape
+
+      ex:EmailShape {
+        ex:email xsd:string ;
+      }
+
+      ex:PhoneShape {
+        ex:phone xsd:string ;
+      }`;
+    const schema = SHEX_PARSER.parse(shapeString);
+
+    const expectedEmailBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/email'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'a',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/email'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedPhoneBranch: IKG = {
+      statements: [
+        DF.quad(
+          subject,
+          DF.namedNode('http://example.org/phone'),
+          DF.blankNode(),
+        ),
+      ],
+      unionStatement: [],
+      constraints: new Map([
+        [
+          'b',
+          [
+            {
+              kind: Kind.DATA_TYPE,
+              statement: DF.quad(
+                subject,
+                DF.namedNode('http://example.org/phone'),
+                DF.blankNode(),
+              ),
+              constraint: 'http://www.w3.org/2001/XMLSchema#string',
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const expectedKg: IKG = {
+      statements: [...expectedEmailBranch.statements, ...expectedPhoneBranch.statements],
+      unionStatement: [expectedEmailBranch, expectedPhoneBranch],
+      constraints: new Map([...expectedEmailBranch.constraints, ...expectedPhoneBranch.constraints]),
+    };
+
+    const resp = shex_to_kg(schema) as IResult<IKG>;
+
+    expect(isResult(resp)).toBe(true);
+    expect(
+      isomorphic(resp.value.statements, expectedKg.statements),
+      `KGs are not isomorphic.\nActual:\n${kgToString(resp.value.statements)}\nExpected:\n${kgToString(expectedKg.statements)}`,
+    ).toBe(true);
+    equalConstrainst(resp.value.constraints, expectedKg.constraints);
+    expect(resp.value.unionStatement).toBeArrayOfSize(0);
+  });
 });
 
 function equalConstrainst(

@@ -38,14 +38,19 @@ export function shex_to_kg(schema: Schema): Result<IKG, string> {
     return result(kg);
   }
   const availableShapes: Map<string, ShapeDecl> = new Map(schema.shapes.map((el) => [el.id, el]));
+  const rootNodesResp = shex_to_shape_tree(schema);
+  if (isError(rootNodesResp)) {
+    return rootNodesResp;
+  }
 
-  for (const shape of schema.shapes) {
-    const res = shape_to_kg(shape, availableShapes);
+  for (const shape of rootNodesResp.value) {
+    const res = shape_to_kg(shape.shape, availableShapes);
     if (isError(res)) {
       return res;
     }
     mergeKg(kg, res.value);
   }
+
   return result(kg);
 }
 
@@ -430,4 +435,92 @@ export enum Kind {
 
 function isShapeOr(shape: ShapeOr | ShapeAnd): shape is ShapeOr {
   return shape.type === 'ShapeOr';
+}
+
+export interface IShapeTreeNode {
+  id: string;
+  shape: ShapeDecl;
+  children: IShapeTreeNode[];
+  relation?: 'OR' | 'AND';
+}
+
+/**
+ * Build a forest of shape trees from a ShEx schema.
+ * Each top-level ShapeDecl becomes a root node. Children are created for shapes
+ * referenced via ShapeOr or ShapeAnd. Inline shape expressions are not expanded as nodes.
+ * @param {Schema} schema A ShEx schema.
+ * @returns {Result<IShapeTreeNode[], string>} The resulting forest of shape trees.
+ */
+function shex_to_shape_tree(schema: Schema): Result<IShapeTreeNode[], string> {
+  if (schema.shapes === undefined) {
+    return result([]);
+  }
+
+  const availableShapes: Map<string, ShapeDecl> = new Map(schema.shapes.map((el) => [el.id, el]));
+  const trees: IShapeTreeNode[] = [];
+
+  for (const shape of schema.shapes) {
+    const res = buildShapeTree(shape, availableShapes, new Set());
+    if (isError(res)) {
+      return res;
+    }
+    trees.push(res.value);
+  }
+
+  const nestedIds = new Set<string>();
+  collectNestedIds(trees, nestedIds);
+
+  return result(trees.filter((node) => !nestedIds.has(node.id)));
+}
+
+function collectNestedIds(nodes: IShapeTreeNode[], nestedIds: Set<string>): void {
+  for (const node of nodes) {
+    for (const child of node.children) {
+      nestedIds.add(child.id);
+      collectNestedIds(child.children, nestedIds);
+    }
+  }
+}
+
+function buildShapeTree(
+  shapeDecl: ShapeDecl,
+  availableShapes: Map<string, ShapeDecl>,
+  visited: Set<string>,
+  relation?: 'OR' | 'AND',
+): Result<IShapeTreeNode, string> {
+  const id = shapeDecl.id;
+
+  if (visited.has(id)) {
+    return result({ id, shape: shapeDecl, children: [], relation });
+  }
+
+  visited.add(id);
+
+  const expr = shapeDecl.shapeExpr;
+
+  if (expr === undefined || (expr.type !== 'ShapeOr' && expr.type !== 'ShapeAnd')) {
+    return result({ id, shape: shapeDecl, children: [], relation });
+  }
+
+  const childRelation: 'OR' | 'AND' = expr.type === 'ShapeOr' ? 'OR' : 'AND';
+  const children: IShapeTreeNode[] = [];
+
+  for (const subExpr of expr.shapeExprs) {
+    if (typeof subExpr !== 'string') {
+      continue;
+    }
+
+    const childDecl = availableShapes.get(subExpr);
+    if (childDecl === undefined) {
+      return error(`shape ${subExpr} is not an available shape`);
+    }
+
+    const childRes = buildShapeTree(childDecl, availableShapes, visited, childRelation);
+    if (isError(childRes)) {
+      return childRes;
+    }
+    children.push(childRes.value);
+  }
+
+  return result({ id, shape: shapeDecl, children, relation });
 }
